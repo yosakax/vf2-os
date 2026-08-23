@@ -7,16 +7,51 @@ This repository contains a hobby operating system project targeting:
 - Final hardware target: StarFive VisionFive 2 (JH7110)
 - ISA: RISC-V 64-bit (RV64GC)
 - Language: Rust
-- Boot flow:
-
-  BootROM
-  -> OpenSBI
-  -> U-Boot
-  -> Custom Rust OS
 
 During early development, QEMU `virt` is the primary execution environment.
 
 The objective is to develop a small educational operating system while keeping hardware-specific assumptions to a minimum.
+
+See "Canonical Boot Flow" below for the full boot chain this project targets.
+
+---
+
+## Canonical Boot Flow
+
+The canonical development and deployment boot flow is:
+
+```text
+QEMU virt
+-> OpenSBI
+-> U-Boot
+-> Rust OS
+
+VisionFive 2
+-> BootROM
+-> OpenSBI
+-> U-Boot
+-> Rust OS
+```
+
+Development should aim to keep these environments as similar as possible.
+
+- **OpenSBI**: on QEMU virt, the platform's bundled generic `fw_dynamic` image
+  (`-bios default`) is sufficient — OpenSBI's `platform/generic` support
+  covers `virt` via its FDT, so no custom OpenSBI build is required for QEMU.
+  VisionFive 2 requires a JH7110-capable OpenSBI build (also `platform/generic`);
+  this is only needed once hardware bring-up starts.
+- **U-Boot**: built from upstream U-Boot source using the `qemu-riscv64_smode_defconfig`
+  (S-mode config, since OpenSBI already did M-mode init) for QEMU, and
+  `starfive_visionfive2_defconfig` for real hardware. Cross-compile with a
+  `riscv64-*-elf-` or `riscv64-*-linux-gnu-` GCC toolchain (U-Boot and OpenSBI
+  are C projects, not built with `cargo`).
+- **Rust OS**: loaded and started by U-Boot via `bootelf`.
+
+Direct kernel boot via QEMU's `-kernel` option (skipping U-Boot) is permitted
+only for initial bring-up and low-level debugging.
+
+All major milestones must eventually be validated through U-Boot using `bootelf`,
+not just via direct `-kernel` boot.
 
 ---
 
@@ -75,13 +110,20 @@ Target:
 riscv64gc-unknown-none-elf
 ```
 
-Required tooling:
+Required tooling for the Rust kernel:
 
 ```bash
 rustup target add riscv64gc-unknown-none-elf
 cargo
 rust-src
 qemu-system-riscv64
+```
+
+Required tooling for the boot chain (U-Boot / OpenSBI, see "Canonical Boot Flow"):
+
+```bash
+riscv64-unknown-elf-gcc   # or riscv64-*-linux-gnu-gcc; used to build U-Boot/OpenSBI (C, not cargo)
+# OpenSBI generic fw_dynamic is bundled with QEMU (-bios default); no separate build needed for QEMU.
 ```
 
 ---
@@ -219,6 +261,11 @@ qemu-system-riscv64 \
   -kernel <kernel>
 ```
 
+Until Milestone 2 (U-Boot/OpenSBI boot chain) lands, this direct `-kernel`
+boot is the validation method. Afterwards, prefer booting through U-Boot's
+`bootelf` per "Canonical Boot Flow", keeping direct `-kernel` boot only for
+low-level bring-up/debugging.
+
 All new functionality should be testable in QEMU before targeting VisionFive 2 hardware.
 
 ---
@@ -244,6 +291,35 @@ fdt detected
 
 ## Milestone 2
 
+Boot the Rust kernel through the full canonical chain in QEMU instead of a
+direct `-kernel` boot:
+
+- Build U-Boot for QEMU virt: `make qemu-riscv64_smode_defconfig`, then
+  `make CROSS_COMPILE=riscv64-unknown-elf- -j$(nproc)` to produce `u-boot.bin`.
+- Boot OpenSBI -> U-Boot in QEMU using the bundled generic firmware:
+
+  ```bash
+  qemu-system-riscv64 -machine virt -nographic -bios default -kernel u-boot.bin
+  ```
+
+  and confirm the flow reaches the U-Boot prompt.
+- Load the Rust kernel ELF into RAM and hand off control from the U-Boot
+  prompt via `bootelf`. For QEMU-only bring-up, preload the ELF with
+  `-device loader,file=<kernel-elf>,addr=0x80200000,cpu-num=0` and run
+  `bootelf 0x80200000` at the U-Boot prompt (a virtio-blk-backed filesystem
+  image with `load virtio 0 ...` is the alternative that also generalizes to
+  real hardware).
+- Expected output is unchanged from Milestone 1 (`hello rust os` /
+  `fdt detected`), but reached via OpenSBI -> U-Boot -> `bootelf` instead of
+  `-kernel`.
+
+Once this lands, prefer the U-Boot/`bootelf` flow over direct `-kernel` boot
+for validating new functionality (see "Canonical Boot Flow" and "Testing").
+
+---
+
+## Milestone 3
+
 Demonstrate:
 
 - UART base address obtained from FDT
@@ -263,28 +339,3 @@ Until core kernel infrastructure exists, do not prioritize:
 - Application ecosystem
 
 Focus on kernel fundamentals first.
-
-## Canonical Boot Flow
-
-The canonical development and deployment boot flow is:
-
-QEMU virt
--> OpenSBI
--> U-Boot
--> Rust OS
-
-and
-
-VisionFive 2
--> BootROM
--> OpenSBI
--> U-Boot
--> Rust OS
-
-Development should aim to keep these environments as similar as possible.
-
-Direct kernel boot via QEMU's `-kernel` option is permitted only
-for initial bring-up and low-level debugging.
-
-All major milestones must eventually be validated through
-U-Boot using `bootelf`.
