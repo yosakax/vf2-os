@@ -30,3 +30,14 @@ pub fn puts(s: &str) {
         putchar(b);
     }
 }
+
+/// Zero-sized handle used to format values onto the UART via `core::fmt`
+/// (e.g. `write!`/`writeln!`) without requiring an allocator.
+pub struct Uart;
+
+impl core::fmt::Write for Uart {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        puts(s);
+        Ok(())
+    }
+}

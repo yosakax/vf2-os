@@ -7,6 +7,7 @@ mod fdt;
 mod memory;
 mod sbi;
 
+use core::fmt::Write;
 use core::panic::PanicInfo;
 
 #[panic_handler]
@@ -24,6 +25,10 @@ fn panic(_info: &PanicInfo) -> ! {
 extern "C" fn start(_hartid: usize, fdt_ptr: usize) -> ! {
     drivers::uart::init();
     drivers::uart::puts("hello rust os\n");
+
+    // `.ok()` discards the Result: writes to the UART can't actually fail,
+    // and there's no error channel to report to this early in boot anyway.
+    writeln!(drivers::uart::Uart, "fdt_ptr = {:#x}", fdt_ptr).ok();
 
     if fdt::check_magic(fdt_ptr) {
         drivers::uart::puts("fdt detected\n");
