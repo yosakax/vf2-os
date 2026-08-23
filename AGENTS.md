@@ -43,14 +43,29 @@ Development should aim to keep these environments as similar as possible.
 - **U-Boot**: built from upstream U-Boot source using the `qemu-riscv64_smode_defconfig`
   (S-mode config, since OpenSBI already did M-mode init) for QEMU, and
   `starfive_visionfive2_defconfig` for real hardware. Cross-compile with a
-  `riscv64-*-elf-` or `riscv64-*-linux-gnu-` GCC toolchain (U-Boot and OpenSBI
-  are C projects, not built with `cargo`).
-- **Rust OS**: loaded and started by U-Boot via `bootelf`.
+  `riscv64-*-linux-gnu-` GCC toolchain, **not** a `riscv64-*-elf-`/newlib
+  toolchain — U-Boot's `CONFIG_EFI_LOADER` build links a couple of helper
+  images (`helloworld.efi`, `efi_selftest`) with `-shared`, which most
+  bare-metal `riscv64-*-elf-` linkers reject (`-shared not supported`); a
+  `riscv64-*-linux-gnu-` linker supports it even though the resulting
+  `u-boot.bin` itself is still a freestanding/bare-metal image. (U-Boot and
+  OpenSBI are C projects, not built with `cargo`.)
+- **Rust OS**: loaded into RAM and started by U-Boot via `bootm`, using a
+  `mkimage`-wrapped uImage — **not** `bootelf`. U-Boot's `bootelf` command
+  calls the ELF entry point as a generic C function, `entry(argc, argv)`
+  (see `lib/elf.c`), so `a0`/`a1` end up holding `argc`/`argv`, not the
+  `hartid`/FDT-pointer pair our kernel's `start(hartid, fdt_ptr)` expects.
+  `bootm`'s Linux-style boot path (`arch/riscv/lib/bootm.c:boot_jump_linux`)
+  instead calls `kernel(gd->arch.boot_hart, images->ft_addr)`, i.e. exactly
+  the `a0 = hartid, a1 = fdt_addr` convention OpenSBI itself uses — so
+  wrapping the kernel as a `uImage` (`-O linux -T kernel`) and booting it
+  with `bootm <addr> - <fdt_addr>` is the way to preserve that convention
+  through U-Boot. See Milestone 2 for the concrete commands.
 
 Direct kernel boot via QEMU's `-kernel` option (skipping U-Boot) is permitted
 only for initial bring-up and low-level debugging.
 
-All major milestones must eventually be validated through U-Boot using `bootelf`,
+All major milestones must eventually be validated through U-Boot using `bootm`,
 not just via direct `-kernel` boot.
 
 ---
@@ -122,7 +137,10 @@ qemu-system-riscv64
 Required tooling for the boot chain (U-Boot / OpenSBI, see "Canonical Boot Flow"):
 
 ```bash
-riscv64-unknown-elf-gcc   # or riscv64-*-linux-gnu-gcc; used to build U-Boot/OpenSBI (C, not cargo)
+riscv64-linux-gnu-gcc   # used to build U-Boot/OpenSBI (C, not cargo)
+# Must be a *-linux-gnu- toolchain, not *-elf-/newlib: U-Boot's EFI_LOADER
+# build needs a linker that supports `-shared` (see "Canonical Boot Flow").
+mkimage                 # from U-Boot's tools/ dir; wraps the kernel as a uImage for `bootm`
 # OpenSBI generic fw_dynamic is bundled with QEMU (-bios default); no separate build needed for QEMU.
 ```
 
@@ -263,8 +281,8 @@ qemu-system-riscv64 \
 
 Until Milestone 2 (U-Boot/OpenSBI boot chain) lands, this direct `-kernel`
 boot is the validation method. Afterwards, prefer booting through U-Boot's
-`bootelf` per "Canonical Boot Flow", keeping direct `-kernel` boot only for
-low-level bring-up/debugging.
+`bootm` (uImage) per "Canonical Boot Flow", keeping direct `-kernel` boot
+only for low-level bring-up/debugging.
 
 All new functionality should be testable in QEMU before targeting VisionFive 2 hardware.
 
@@ -294,8 +312,14 @@ fdt detected
 Boot the Rust kernel through the full canonical chain in QEMU instead of a
 direct `-kernel` boot:
 
-- Build U-Boot for QEMU virt: `make qemu-riscv64_smode_defconfig`, then
-  `make CROSS_COMPILE=riscv64-unknown-elf- -j$(nproc)` to produce `u-boot.bin`.
+- Build U-Boot for QEMU virt:
+
+  ```bash
+  make qemu-riscv64_smode_defconfig
+  make CROSS_COMPILE=riscv64-linux-gnu- -j$(nproc)   # NOT riscv64-*-elf-, see "Canonical Boot Flow"
+  ```
+
+  producing `u-boot.bin`.
 - Boot OpenSBI -> U-Boot in QEMU using the bundled generic firmware:
 
   ```bash
@@ -303,17 +327,44 @@ direct `-kernel` boot:
   ```
 
   and confirm the flow reaches the U-Boot prompt.
-- Load the Rust kernel ELF into RAM and hand off control from the U-Boot
-  prompt via `bootelf`. For QEMU-only bring-up, preload the ELF with
-  `-device loader,file=<kernel-elf>,addr=0x80200000,cpu-num=0` and run
-  `bootelf 0x80200000` at the U-Boot prompt (a virtio-blk-backed filesystem
-  image with `load virtio 0 ...` is the alternative that also generalizes to
-  real hardware).
-- Expected output is unchanged from Milestone 1 (`hello rust os` /
-  `fdt detected`), but reached via OpenSBI -> U-Boot -> `bootelf` instead of
-  `-kernel`.
+- Do **not** use `bootelf` to start the kernel — it calls the entry point as
+  `entry(argc, argv)`, not `entry(hartid, fdt_addr)`, so the kernel would
+  receive the wrong values in `a0`/`a1` (see "Canonical Boot Flow"). Instead,
+  wrap the kernel as a U-Boot `uImage` and use `bootm`:
 
-Once this lands, prefer the U-Boot/`bootelf` flow over direct `-kernel` boot
+  ```bash
+  riscv64-linux-gnu-objcopy -O binary kernel kernel.bin
+  mkimage -A riscv -O linux -T kernel -C none \
+    -a 0x80200000 -e 0x80200000 -d kernel.bin uImage
+  ```
+
+  (`-a`/`-e` must match the kernel's link address, i.e. `BASE_ADDRESS` in
+  `linker.ld`.)
+- Preload the uImage into RAM at an address that does **not** overlap
+  U-Boot's own load address (`CONFIG_TEXT_BASE`, `0x80200000` for this
+  defconfig) — e.g. `0x84000000` — and boot it, passing U-Boot's own control
+  FDT address through so the kernel still receives a valid FDT pointer:
+
+  ```bash
+  qemu-system-riscv64 -machine virt -nographic -bios default -kernel u-boot.bin \
+    -device loader,file=uImage,addr=0x84000000
+  ```
+
+  then, at the U-Boot prompt:
+
+  ```text
+  printenv fdtcontroladdr
+  bootm 0x84000000 - $fdtcontroladdr
+  ```
+
+  (a virtio-blk-backed filesystem image with `load virtio 0 ...` in place of
+  `-device loader` is the alternative that also generalizes to real
+  hardware).
+- Expected output is unchanged from Milestone 1 (`hello rust os` /
+  `fdt_ptr = 0x...` / `fdt detected`), but reached via
+  OpenSBI -> U-Boot -> `bootm` instead of `-kernel`.
+
+Once this lands, prefer the U-Boot/`bootm` flow over direct `-kernel` boot
 for validating new functionality (see "Canonical Boot Flow" and "Testing").
 
 ---
