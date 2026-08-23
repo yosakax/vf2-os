@@ -1,0 +1,32 @@
+//! Minimal NS16550A-compatible UART driver.
+//!
+//! TODO: obtain from FDT. This address is QEMU virt's hardcoded early-boot
+//! UART; per the UART Policy in AGENTS.md, long-term this must be replaced
+//! by runtime discovery via the device tree so the same driver also works
+//! on VisionFive 2 (JH7110).
+const UART_BASE: usize = 0x1000_0000;
+
+/// Line Status Register offset; bit 5 (THRE) indicates the transmit holding
+/// register is empty and ready to accept a new byte.
+const LSR_OFFSET: usize = 5;
+const LSR_THRE: u8 = 1 << 5;
+
+pub fn init() {
+    // QEMU's ns16550 model transmits without needing explicit line/baud
+    // configuration, so there is nothing to do here yet.
+}
+
+pub fn putchar(c: u8) {
+    unsafe {
+        // UART MMIO read: poll Line Status Register until THR is empty.
+        while (UART_BASE as *const u8).add(LSR_OFFSET).read_volatile() & LSR_THRE == 0 {}
+        // UART MMIO write: transmit holding register (THR) at offset 0.
+        (UART_BASE as *mut u8).write_volatile(c);
+    }
+}
+
+pub fn puts(s: &str) {
+    for b in s.bytes() {
+        putchar(b);
+    }
+}

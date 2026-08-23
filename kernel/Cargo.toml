@@ -1,0 +1,22 @@
+[package]
+name = "kernel"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "kernel"
+path = "src/main.rs"
+# This is a #![no_std] #![no_main] freestanding binary: it defines its own
+# panic_impl and has no test harness support, so `cargo test` cannot build a
+# test binary for it. Disabling the test/doctest targets keeps `cargo test`
+# a no-op instead of a hard compile error, per the Testing workflow in
+# AGENTS.md.
+test = false
+doctest = false
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true
