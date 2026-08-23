@@ -376,6 +376,49 @@ Demonstrate:
 - UART base address obtained from FDT
 - No hardcoded UART address in generic kernel code
 
+Planned implementation steps:
+
+- Extend `kernel/src/fdt/mod.rs` beyond magic-number validation into a
+  minimal structure-block walker: parse the FDT header (`off_dt_struct`,
+  `off_dt_strings`), then walk `FDT_BEGIN_NODE` / `FDT_PROP` /
+  `FDT_END_NODE` tokens to find a node whose `compatible` property contains
+  `"ns16550a"` (QEMU virt) — the same walker should also recognize
+  `"snps,dw-apb-uart"` so the same code path works on VisionFive 2 without
+  board-specific branches. No heap allocator exists yet (see Memory
+  Management Policy), so this must be written as a zero-allocation,
+  `&[u8]`-slice-based parser (no `Vec`/`String`), returning plain integers
+  and byte-slice comparisons only.
+  - Alternative: add the no_std, allocation-free `fdt` crate as a dependency
+    instead of hand-rolling the walker. This would be the project's first
+    external dependency — only do this if the hand-rolled parser proves
+    too error-prone, and confirm the crate builds for
+    `riscv64gc-unknown-none-elf` with no `alloc` feature required.
+- Respect `#address-cells` / `#size-cells` (inherited from the parent
+  `/soc` node, typically `2`/`2` on both QEMU virt and JH7110) when decoding
+  the `reg` property, instead of assuming a fixed cell width.
+- Add a function such as `fdt::find_uart_base(fdt_ptr: usize) -> Option<usize>`
+  that returns the first `reg` address of the matching node.
+- Refactor `kernel/src/drivers/uart.rs` so `UART_BASE` is no longer a fixed
+  `const`: change `init()` to `init(base: usize)` and store the discovered
+  address in a `static AtomicUsize` (safe without an allocator or locks),
+  read by `putchar`/`puts` on every call. Keep the current
+  `0x1000_0000` value only as a documented fallback used if FDT discovery
+  fails before the UART is otherwise usable (e.g. for early panic
+  messages), clearly marked `// TODO: remove once FDT discovery is proven
+  reliable on both targets`.
+- Update `kernel/src/main.rs`'s boot sequence: parse the FDT
+  (`fdt::find_uart_base`) immediately after `fdt::check_magic`, then call
+  `drivers::uart::init(base)` with the discovered address before any
+  further output.
+- Validate in QEMU virt: the discovered base must equal the current
+  hardcoded `0x1000_0000`, so existing output
+  (`hello rust os` / `fdt_ptr = 0x...` / `fdt detected`) is unchanged — this
+  is a regression check, not a new visible behavior.
+- Real VisionFive 2 hardware validation (confirming the same code resolves
+  the correct JH7110 UART base from its DTB) is out of scope until board
+  bring-up begins; QEMU virt validation is sufficient to close this
+  milestone per "Current Development Target".
+
 ---
 
 ## Non-Goals
