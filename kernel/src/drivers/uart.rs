@@ -4,6 +4,7 @@
 //! UART; per the UART Policy in AGENTS.md, long-term this must be replaced
 //! by runtime discovery via the device tree so the same driver also works
 //! on VisionFive 2 (JH7110).
+use core::fmt::{self, Write};
 const UART_BASE: usize = 0x1000_0000;
 
 /// Line Status Register offset; bit 5 (THRE) indicates the transmit holding
@@ -40,4 +41,38 @@ impl core::fmt::Write for Uart {
         puts(s);
         Ok(())
     }
+}
+
+pub struct UartWriter;
+
+impl Write for UartWriter {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        // drivers::uart::puts に委譲する（unsafe は puts 側で扱う想定）
+        crate::drivers::uart::puts(s);
+        Ok(())
+    }
+}
+
+/// uart 用の print マクロ群
+#[macro_export]
+macro_rules! uprint {
+    ($($arg:tt)*) => {{
+        use core::fmt::Write;
+        let mut w = crate::drivers::uart::UartWriter;
+        // ignore errors in early-boot environment
+        let _ = write!(&mut w, $($arg)*);
+    }};
+}
+
+#[macro_export]
+macro_rules! uprintln {
+    () => {
+        $crate::uprint!("\n")
+    };
+    ($fmt:expr) => {
+        $crate::uprint!(concat!($fmt, "\n"))
+    };
+    ($fmt:expr, $($arg:tt)*) => {
+        $crate::uprint!(concat!($fmt, "\n"), $($arg)*)
+    };
 }
