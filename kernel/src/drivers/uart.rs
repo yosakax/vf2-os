@@ -55,7 +55,7 @@ impl Write for UartWriter {
 
 /// uart 用の print マクロ群
 #[macro_export]
-macro_rules! uprint {
+macro_rules! kprint {
     ($($arg:tt)*) => {{
         use core::fmt::Write;
         let mut w = crate::drivers::uart::UartWriter;
@@ -65,14 +65,14 @@ macro_rules! uprint {
 }
 
 #[macro_export]
-macro_rules! uprintln {
+macro_rules! kprintln {
     () => {
-        $crate::uprint!("\n")
+        $crate::kprint!("\n")
     };
     ($fmt:expr) => {
-        $crate::uprint!(concat!($fmt, "\n"))
+        $crate::kprint!(concat!($fmt, "\n"))
     };
     ($fmt:expr, $($arg:tt)*) => {
-        $crate::uprint!(concat!($fmt, "\n"), $($arg)*)
+        $crate::kprint!(concat!($fmt, "\n"), $($arg)*)
     };
 }
