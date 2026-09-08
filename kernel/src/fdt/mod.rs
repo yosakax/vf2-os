@@ -16,9 +16,6 @@ pub fn check_magic(fdt_ptr: usize) -> bool {
         return false;
     }
 
-    // // SAFETY: fdt_ptr is provided by OpenSBI in the `a1` register per the
-    // // RISC-V supervisor boot convention and is expected to point to a valid
-    // // FDT blob whose first field is a 32-bit big-endian magic number.
     let magic = unsafe { core::ptr::read_volatile(fdt_ptr as *const u32) };
     u32::from_be(magic) == FDT_MAGIC
 }

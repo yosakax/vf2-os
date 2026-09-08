@@ -1,9 +1,4 @@
 //! Minimal NS16550A-compatible UART driver.
-//!
-//! TODO: obtain from FDT. This address is QEMU virt's hardcoded early-boot
-//! UART; per the UART Policy in AGENTS.md, long-term this must be replaced
-//! by runtime discovery via the device tree so the same driver also works
-//! on VisionFive 2 (JH7110).
 use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicUsize, Ordering};
 pub const FALLBACK_UART_BASE: usize = 0x1000_0000;
@@ -16,8 +11,6 @@ const LSR_THRE: u8 = 1 << 5;
 
 pub fn init(base: usize) {
     UART_BASE.store(base, Ordering::Relaxed);
-    // QEMU's ns16550 model transmits without needing explicit line/baud
-    // configuration, so there is nothing to do here yet.
 }
 
 pub fn putchar(c: u8) {
