@@ -5,25 +5,43 @@
 //! by runtime discovery via the device tree so the same driver also works
 //! on VisionFive 2 (JH7110).
 use core::fmt::{self, Write};
-const UART_BASE: usize = 0x1000_0000;
+use core::sync::atomic::{AtomicUsize, Ordering};
+pub const FALLBACK_UART_BASE: usize = 0x1000_0000;
+static UART_BASE: AtomicUsize = AtomicUsize::new(FALLBACK_UART_BASE);
 
 /// Line Status Register offset; bit 5 (THRE) indicates the transmit holding
 /// register is empty and ready to accept a new byte.
 const LSR_OFFSET: usize = 5;
 const LSR_THRE: u8 = 1 << 5;
 
-pub fn init() {
+pub fn init(base: usize) {
+    UART_BASE.store(base, Ordering::Relaxed);
     // QEMU's ns16550 model transmits without needing explicit line/baud
     // configuration, so there is nothing to do here yet.
 }
 
 pub fn putchar(c: u8) {
+    let base = UART_BASE.load(Ordering::Relaxed);
+
+    // NOTE: base + 0: THR 送信レジスタ(Transmitter Holding Register)
+    //                      送信する文字を書くレジスタ
+    //                 RBR(Receiver Buffer Register)
+    //                      受信した文字を読むレジスタ
+    //       base + 5: LSR ラインステータスレジスタ
+    //                      UARTの状態を読むレジスタ
+    //                 THRE(Transmitter Holding Register Empty)
+    //                      送信保持レジスタが空という意味。LSRのビット5に割り当てられている
     unsafe {
-        // UART MMIO read: poll Line Status Register until THR is empty.
-        while (UART_BASE as *const u8).add(LSR_OFFSET).read_volatile() & LSR_THRE == 0 {}
-        // UART MMIO write: transmit holding register (THR) at offset 0.
-        (UART_BASE as *mut u8).write_volatile(c);
+        // UARTの送信レジスタが空くまで待ってからread_volatileする
+        while (base as *const u8).add(LSR_OFFSET).read_volatile() & LSR_THRE == 0 {}
+        (base as *mut u8).write_volatile(c);
     }
+    // unsafe {
+    //     // UART MMIO read: poll Line Status Register until THR is empty.
+    //     while (base as *const u8).add(LSR_OFFSET).read_volatile() & LSR_THRE == 0 {}
+    //     // UART MMIO write: transmit holding register (THR) at offset 0.
+    //     (base as *mut u8).write_volatile(c);
+    // }
 }
 
 pub fn puts(s: &str) {
