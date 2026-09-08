@@ -1,6 +1,29 @@
 use crate::{drivers, kprint, kprintln};
 use core::fmt::Write;
 
+#[repr(u32)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FdtToken {
+    BeginNode = 0x1,
+    EndNode = 0x2,
+    Prop = 0x3,
+    Nop = 0x4,
+    End = 0x9,
+}
+
+impl FdtToken {
+    fn from_raw(value: u32) -> Option<Self> {
+        match value {
+            0x1 => Some(Self::BeginNode),
+            0x2 => Some(Self::EndNode),
+            0x3 => Some(Self::Prop),
+            0x4 => Some(Self::Nop),
+            0x9 => Some(Self::End),
+            _ => None,
+        }
+    }
+}
+
 pub fn find_uart_base(fdt_ptr: usize) -> Option<bool> {
     let header = FdtHeader::new(fdt_ptr);
     writeln!(
@@ -15,27 +38,24 @@ pub fn find_uart_base(fdt_ptr: usize) -> Option<bool> {
     kprintln!("first token = {:#x}", token);
     let mut p = struct_base;
     while true {
-        let token = read_be32(p);
-        kprintln!("{:#010x}", token);
+        let token = FdtToken::from_raw(read_be32(p))?;
+        kprintln!("{:#010x}", token as u32);
         match token {
-            0x00000001 => {
-                // uprintln!("FDT_BEGIN_NODE");
+            FdtToken::BeginNode => {
                 p = unsafe { p.add(4) };
                 p = skip_cstr(p);
                 p = align4(p);
             }
-            0x00000002 => {
-                // uprintln!("FDT_END_NODE");
+            FdtToken::EndNode => {
                 p = unsafe { p.add(4) };
             }
-            0x00000003 => {
-                // uprintln!("FDT_PROP");
+            FdtToken::Prop => {
                 let len = read_be32(unsafe { p.add(4) }) as usize;
                 let nameoff = read_be32(unsafe { p.add(8) }) as usize;
                 let strings_base = (fdt_ptr + header.off_dt_string as usize) as *const u8;
                 let name_ptr = unsafe { strings_base.add(nameoff) };
                 let prop_name = cstr_bytes(name_ptr);
-                kprintln!("len = {}", len);
+                // kprintln!("len = {}", len);
                 kprint!("prop_name = ");
                 for b in prop_name.iter() {
                     kprint!("{}", *b as char);
@@ -54,19 +74,13 @@ pub fn find_uart_base(fdt_ptr: usize) -> Option<bool> {
                 p = align4(p);
             }
 
-            0x00000004 => {
-                // uprintln!("FDT_NOP");
+            FdtToken::Nop => {
                 p = unsafe { p.add(4) };
             }
-            0x00000009 => {
-                // uprintln!("FDT_END");
+            FdtToken::End => {
                 break;
             }
-            _ => {
-                p = unsafe { p.add(4) };
-            }
         }
-        // unsafe { p = unsafe { p.add(4) } };
     }
 
     Some(header.magic == 0xD00DFEED)
