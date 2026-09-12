@@ -42,6 +42,21 @@ extern "C" fn start(_hartid: usize, fdt_ptr: usize) -> ! {
 
     kprintln!("uart_address found: {:#x}", uart_address);
     kprintln!("hello from vf2 kernel!");
+
+    match sbi::get_spec_version() {
+        Ok(version) => {
+            let major = version >> 24;
+            let minor = version & 0x00ff_ffff;
+            kprintln!(
+                "SBI spec version: {}.{} (raw = {:#x})",
+                major,
+                minor,
+                version
+            );
+        }
+        Err(error) => kprintln!("SBI get spec version failed: {:?}", error),
+    }
+
     loop {
         // SAFETY: wfi just halts the hart until an interrupt; always safe.
         unsafe { core::arch::asm!("wfi") };
