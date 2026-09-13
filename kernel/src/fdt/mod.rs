@@ -5,6 +5,7 @@
 //! added when device discovery is implemented.
 
 mod walker;
+pub use walker::find_timebase_frequency;
 pub use walker::find_uart_base;
 
 const FDT_MAGIC: u32 = 0xd00d_feed;

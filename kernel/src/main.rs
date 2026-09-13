@@ -6,9 +6,11 @@ mod drivers;
 mod fdt;
 mod memory;
 mod sbi;
+mod timer;
 
 use core::panic::PanicInfo;
 
+use self::arch::riscv64::trap;
 use self::drivers::uart::FALLBACK_UART_BASE;
 
 #[panic_handler]
@@ -57,8 +59,16 @@ extern "C" fn start(_hartid: usize, fdt_ptr: usize) -> ! {
         Err(error) => kprintln!("SBI get spec version failed: {:?}", error),
     }
 
+    let Some(timebase_freq) = fdt::find_timebase_frequency(fdt_ptr) else {
+        panic!("timebase-frequency is not found in FDT");
+    };
+
+    trap::init();
+    kprintln!("timer initialized: {}Hz", timebase_freq);
+    timer::init(timebase_freq, 10).unwrap();
+    trap::enable_supervisor_timer_interrupt();
+
     loop {
-        // SAFETY: wfi just halts the hart until an interrupt; always safe.
         unsafe { core::arch::asm!("wfi") };
     }
 }

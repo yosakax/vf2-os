@@ -1,4 +1,4 @@
-use crate::kprintln;
+use crate::{kprint, kprintln};
 
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -289,4 +289,62 @@ fn decode_reg_address(
     };
 
     usize::try_from(address).ok()
+}
+
+pub fn find_timebase_frequency(fdt_ptr: usize) -> Option<u64> {
+    let header = FdtHeader::new(fdt_ptr);
+    let struct_base = (fdt_ptr + header.off_dt_struct as usize) as *const u8;
+    let mut p = struct_base;
+    let mut is_cpu: bool = false;
+    let mut cpu_depth = 0;
+    let mut depth = 0;
+
+    loop {
+        let token = FdtToken::from_raw(read_be32(p))?;
+        match token {
+            FdtToken::BeginNode => {
+                depth += 1;
+                p = unsafe { p.add(4) };
+                let node_name = cstr_bytes(p);
+                if node_name == b"cpus" {
+                    is_cpu = true;
+                    cpu_depth = depth;
+                }
+                p = skip_cstr(p);
+                p = align4(p);
+            }
+            FdtToken::EndNode => {
+                if is_cpu && depth == cpu_depth {
+                    is_cpu = false;
+                }
+                depth -= 1;
+                p = unsafe { p.add(4) };
+            }
+            FdtToken::Prop => {
+                let len = read_be32(unsafe { p.add(4) }) as usize;
+                let nameoff = read_be32(unsafe { p.add(8) }) as usize;
+
+                let strings_base = (fdt_ptr + header.off_dt_string as usize) as *const u8;
+                let name_ptr = unsafe { strings_base.add(nameoff) };
+                let prop_name = cstr_bytes(name_ptr);
+                let value_ptr = unsafe { p.add(12) };
+
+                if prop_name == b"timebase-frequency" && is_cpu {
+                    let timebase_frequency = read_be32(value_ptr);
+                    return Some(timebase_frequency as u64);
+                }
+
+                p = unsafe { value_ptr.add(len) };
+                p = align4(p);
+            }
+
+            FdtToken::Nop => {
+                p = unsafe { p.add(4) };
+            }
+            FdtToken::End => {
+                // NOTE: ここにくるということは、uartを見つけられずにおわったということ。
+                return None;
+            }
+        }
+    }
 }
