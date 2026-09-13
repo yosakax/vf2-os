@@ -132,7 +132,7 @@ unsafe extern "C" {
 }
 
 pub fn init() {
-    write_stvec(__trap_entry as usize);
+    write_stvec(__trap_entry as *const () as usize);
 }
 
 #[no_mangle]

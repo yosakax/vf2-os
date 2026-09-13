@@ -331,7 +331,11 @@ pub fn find_timebase_frequency(fdt_ptr: usize) -> Option<u64> {
 
                 if prop_name == b"timebase-frequency" && is_cpu {
                     let timebase_frequency = read_be32(value_ptr);
-                    return Some(timebase_frequency as u64);
+                    if timebase_frequency == 0 {
+                        return None;
+                    } else {
+                        return Some(timebase_frequency as u64);
+                    }
                 }
 
                 p = unsafe { value_ptr.add(len) };
